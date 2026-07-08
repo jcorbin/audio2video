@@ -17,13 +17,16 @@ def create_video(
     mid_path: str,
     outro_path: str,
     output_path: str,
+    verbose: int = 0,
 ):
     """
     TODO document
     """
-    subproc_stdout = subprocess.DEVNULL
+    subproc_stdout = subprocess.STDOUT if verbose > 0 else subprocess.DEVNULL
     subproc_stderr = subprocess.STDOUT
     def run_proc(prog: str, *args: str):
+        if verbose > 0:
+            print(f"Running $ {prog} {args}")
         _ = subprocess.run([prog, *args], check=True, stdout=subproc_stdout, stderr=subproc_stderr)
 
     print("Analyzing files...")
@@ -73,7 +76,9 @@ def create_video(
     print(f"Done! Saved to {output_path}")
 
 if __name__ == "__main__":
+    # TODO refactor to use argparse
     if len(sys.argv) < 6:
         print("Usage: python audio_to_video.py <audio> <intro> <mid> <outro> <output>")
         sys.exit(1)
     create_video(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    # TODO wire up create_video(verbose) argument to an argparse option
