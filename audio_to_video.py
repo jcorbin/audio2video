@@ -1,3 +1,7 @@
+'''
+TODO write intro content here, disclaim use of AI, describe how to run this tool with an example, etc
+'''
+
 import os
 import subprocess
 import sys
@@ -59,8 +63,11 @@ def create_video(
     - verbose: Verbosity level (0: silent, 1: info, 2: debug).
     """
 
+    # TODO plumb these thru args to CLI options
     audio_codec = 'aac'
     video_codec = 'libx264'
+    ffmpeg_preset = 'fast'  # Faster encoding speed/quality tradeoff
+    ffmpeg_crf = '23'       # Constant Rate Factor (standard quality balance)
 
     subproc_stdout = None if verbose > 0 else subprocess.DEVNULL
     subproc_stderr = subprocess.STDOUT
@@ -126,10 +133,10 @@ def create_video(
         '-stream_loop', '-1',  # loops infinitely
         '-i', mid_path,
         '-t', str(d_gap),      # limits the total duration of the output
-        '-c:v', video_codec,   # Re-encode to ensure precision (avoid -c copy keyframe drift)
-        '-preset', 'fast',     # Speed/quality tradeoff (faster encoding)
-        '-crf', '23',          # Constant Rate Factor (standard quality balance)
         '-pix_fmt', 'yuv420p', # Ensure YUV 4:2:0 pixel format for compatibility
+        '-c:v', video_codec,
+        '-preset', ffmpeg_preset,
+        '-crf', ffmpeg_crf,
         mid_temp)
 
     # 2. Create a concat list file for ffmpeg
@@ -148,19 +155,19 @@ def create_video(
     print("Assembling final video...")
     run_proc(
         'ffmpeg',
-        '-y',                                          # Overwrite output files without asking
-        '-f', 'concat',                                # Use the concat demuxer to join files in a list
-        '-safe', '0',                                  # Disable safe filename checks for absolute paths
-        '-i', list_temp,                               # Video sequence
-        '-i', audio_path,                              # Audio Track
-        '-map', '0:v',                                 # Use video from concat
-        '-map', '1:a',                                 # Use audio from file
-        '-t', str(d_audio),                            # Hard limit to ensure output matches audio length
-        '-shortest',                                   # Trim to shortest stream
+        '-y',               # Overwrite output files without asking
+        '-f', 'concat',     # Use the concat demuxer to join files in a list
+        '-safe', '0',       # Disable safe filename checks for absolute paths
+        '-i', list_temp,    # Video sequence
+        '-i', audio_path,   # Audio Track
+        '-map', '0:v',      # Use video from concat
+        '-map', '1:a',      # Use audio from file
+        '-t', str(d_audio), # Hard limit to ensure output matches audio length
+        '-shortest',        # Trim to shortest stream
         '-c:v', video_codec,
         '-c:a', audio_codec,
-        '-preset', 'fast', # TODO document
-        '-crf', '23', # TODO document
+        '-preset', ffmpeg_preset,
+        '-crf', ffmpeg_crf,
         output_path)
 
     print(f"Done! Saved to {output_path}")
