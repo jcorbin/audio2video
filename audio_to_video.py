@@ -22,7 +22,7 @@ def create_video(
     TODO document
     """
     subproc_stdout = subprocess.DEVNULL
-    subproc_stderr = subprocess.DEVNULL
+    subproc_stderr = subprocess.STDOUT
     def run_proc(prog: str, *args: str):
         _ = subprocess.run([prog, *args], check=True, stdout=subproc_stdout, stderr=subproc_stderr)
 
