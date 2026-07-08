@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 
 def get_duration(file: str):
     """Returns the duration of a file in seconds."""
@@ -10,6 +11,15 @@ def get_duration(file: str):
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return float(result.stdout.strip())
+
+# TODO is there a better stdlib implementation of this that we can just use?
+@contextmanager
+def temp_file(name: str):
+    # TODO use a real $TMP file
+    try:
+        yield name
+    finally:
+        os.remove(name)
 
 def create_video(
     audio_path: str,
@@ -42,37 +52,39 @@ def create_video(
 
     print(f"Audio duration: {d_audio:.2f}s | Gap to fill: {d_gap:.2f}s")
 
-    # 1. Create a temporary looped middle segment trimmed to exact length
-    mid_temp = "mid_temp.mp4"
-    print("Generating looped middle segment...")
-    run_proc(
-        'ffmpeg',
-        '-y',
-        '-stream_loop', '-1', # loops infinitely
-        '-i', mid_path,
-        '-t', str(d_gap), # limits the total duration of the output
-        '-c', 'copy', mid_temp)
+    with (
+        temp_file("mid_temp.mp4") as mid_temp,
+        temp_file('concat_list.txt') as list_temp):
 
-    # 2. Create a concat list file for ffmpeg
-    with open('concat_list.txt', 'w') as f:
-        _ = f.write(f"file '{intro_path}'\n")
-        _ = f.write(f"file '{mid_temp}'\n")
-        _ = f.write(f"file '{outro_path}'\n")
+        # 1. Create a temporary looped middle segment trimmed to exact length
+        print("Generating looped middle segment...")
+        run_proc(
+            'ffmpeg',
+            '-y',
+            '-stream_loop', '-1', # loops infinitely
+            '-i', mid_path,
+            '-t', str(d_gap), # limits the total duration of the output
+            '-c', 'copy', mid_temp)
 
-    # 3. Concatenate videos and add the audio file
-    print("Assembling final video...")
-    run_proc(
-        'ffmpeg', '-y',
-        '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', # Video sequence
-        '-i', audio_path,                                      # Audio track
-        '-map', '0:v', '-map', '1:a',                          # Use video from concat, audio from file
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',    # Encode to ensure compatibility
-        '-c:a', 'aac', '-shortest',                            # Audio codec and trim to shortest
-        output_path)
+        # 2. Create a concat list file for ffmpeg
+        with open(list_temp, 'w') as f:
+            _ = f.write(f"file '{intro_path}'\n")
+            _ = f.write(f"file '{mid_temp}'\n")
+            _ = f.write(f"file '{outro_path}'\n")
 
-    # Cleanup
-    os.remove(mid_temp)
-    os.remove('concat_list.txt')
+        # TODO debug print list_temp contents if verbose > 1
+
+        # 3. Concatenate videos and add the audio file
+        print("Assembling final video...")
+        run_proc(
+            'ffmpeg', '-y',
+            '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', # Video sequence
+            '-i', audio_path,                                      # Audio track
+            '-map', '0:v', '-map', '1:a',                          # Use video from concat, audio from file
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',    # Encode to ensure compatibility
+            '-c:a', 'aac', '-shortest',                            # Audio codec and trim to shortest
+            output_path)
+
     print(f"Done! Saved to {output_path}")
 
 if __name__ == "__main__":
