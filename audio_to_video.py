@@ -4,11 +4,26 @@ import sys
 import tempfile
 from math import nan, isnan
 
+# TODO okay so the intro is working, but the outro is missing from the output.
+#      Even just looking at the duraions does not add up correctly:
+#      - 492.400000 demo1/out.mkv
+#      - 488.332104 demo1/What is in my Drink.mp3
+#      - 3.000000 tmp1/intro_temp.mp4
+#      - 482.342000 tmp1/mid_temp.mp4
+#      - 3.000000 tmp1/outro_temp.mp4
+# TODO So:
+#      1. the output is *longer* than the input audio track, should be same length
+#      2. the intro, mid, and outro temp duraions look correct
+#      2. but the output length isn't anything clean wrt any of that, it's not +3 or +6 on either the audio track or mid gap length
+
 def get_duration(file: str):
     """Returns the duration of a file in seconds."""
     cmd = [
-        'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1', file
+        'ffprobe',
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        file
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     out = result.stdout.strip()
@@ -55,6 +70,10 @@ def create_video(
     - outro_duration: Duration in seconds if outro is a still image.
     - verbose: Verbosity level (0: silent, 1: info, 2: debug).
     """
+
+    audio_codec = 'aac'
+    video_codec = 'libx264'
+
     subproc_stdout = None if verbose > 0 else subprocess.DEVNULL
     subproc_stderr = subprocess.STDOUT
     def run_proc(prog: str, *args: str):
@@ -91,10 +110,10 @@ def create_video(
         temp_clip = os.path.join(work_dir, f"{name}_temp.mp4")
         print(f"Converting still image {path} to video clip...")
         args = [
-            '-i', path,
-            '-t', str(duration),
             '-y',                 # Overwrite output files without asking
             '-loop', '1',         # Loop the input image infinitely
+            '-i', path,
+            '-t', str(duration),  # Resolved clip duration
             '-c:v', 'libx264',    # Use H.264 video codec
             '-preset', 'fast',    # Faster encoding speed/quality tradeoff
             '-crf', '23',         # Constant Rate Factor (lower is higher quality)
@@ -112,11 +131,12 @@ def create_video(
 
     # 1. Create a temporary looped middle segment trimmed to exact length
     print("Generating looped middle segment...")
+
     run_proc(
         'ffmpeg',
-        '-i', mid_path,
         '-y',                 # Overwrite output files without asking
         '-stream_loop', '-1', # loops infinitely
+        '-i', mid_path,
         '-t', str(d_gap),     # limits the total duration of the output
         '-c', 'copy',         # Copy streams without re-encoding
         mid_temp)
@@ -137,12 +157,18 @@ def create_video(
     print("Assembling final video...")
     run_proc(
         'ffmpeg',
-        '-i', audio_path,
-        '-y',                                               # Overwrite output files without asking
-        '-f', 'concat', '-safe', '0', '-i', list_temp,      # Video sequence
-        '-map', '0:v', '-map', '1:a',                       # Use video from concat, audio from file
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', # Encode to ensure compatibility
-        '-c:a', 'aac', '-shortest',                         # Audio codec and trim to shortest
+        '-y',                                          # Overwrite output files without asking
+        '-f', 'concat', # TODO document
+        '-safe', '0', # TODO document
+        '-i', list_temp,                               # Video sequence
+        '-i', audio_path,                              # Audio Track
+        '-map', '0:v',                                 # Use video from concat
+        '-map', '1:a',                                 # Use audio from file
+        '-shortest',                                   # trim to shortest
+        '-c:v', video_codec,
+        '-c:a', audio_codec,
+        '-preset', 'fast', # TODO document
+        '-crf', '23', # TODO document
         output_path)
 
     print(f"Done! Saved to {output_path}")
