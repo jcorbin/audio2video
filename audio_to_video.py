@@ -2,7 +2,7 @@ import subprocess
 import sys
 import os
 
-def get_duration(file):
+def get_duration(file: str):
     """Returns the duration of a file in seconds."""
     cmd = [
         'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
@@ -11,7 +11,13 @@ def get_duration(file):
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     return float(result.stdout.strip())
 
-def create_video(audio_path, intro_path, mid_path, outro_path, output_path):
+def create_video(
+    audio_path: str,
+    intro_path: str,
+    mid_path: str,
+    outro_path: str,
+    output_path: str,
+):
     print("Analyzing files...")
     d_audio = get_duration(audio_path)
     d_intro = get_duration(intro_path)
@@ -29,20 +35,20 @@ def create_video(audio_path, intro_path, mid_path, outro_path, output_path):
     mid_temp = "mid_temp.mp4"
     print("Generating looped middle segment...")
     # -stream_loop -1 loops infinitely, -t limits the total duration of the output
-    subprocess.run([
+    _ = subprocess.run([
         'ffmpeg', '-y', '-stream_loop', '-1', '-i', mid_path,
         '-t', str(d_gap), '-c', 'copy', mid_temp
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # 2. Create a concat list file for ffmpeg
     with open('concat_list.txt', 'w') as f:
-        f.write(f"file '{intro_path}'\n")
-        f.write(f"file '{mid_temp}'\n")
-        f.write(f"file '{outro_path}'\n")
+        _ = f.write(f"file '{intro_path}'\n")
+        _ = f.write(f"file '{mid_temp}'\n")
+        _ = f.write(f"file '{outro_path}'\n")
 
     # 3. Concatenate videos and add the audio file
     print("Assembling final video...")
-    subprocess.run([
+    _ = subprocess.run([
         'ffmpeg', '-y', 
         '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', # Video sequence
         '-i', audio_path,                                     # Audio track
@@ -63,4 +69,3 @@ if __name__ == "__main__":
         sys.exit(1)
         
     create_video(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
-
