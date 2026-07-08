@@ -1,5 +1,20 @@
 '''
-TODO write intro content here, disclaim use of AI, describe how to run this tool with an example, etc
+This tool assembles a video by combining an intro, a looping middle segment, and an outro, 
+synchronizing the total length to match a provided audio track.
+
+**Example Usage**: audio/video inputs
+    python audio_to_video.py audio.mp3 intro.mp4 loop.mp4 outro.mp4 output.mp4
+
+**Example Usage**: still frame image intro/outros
+    python audio_to_video.py audio.mp3 intro.png loop.mp4 outro.png output.mp4 \
+        --intro-duration 5.0 --outro-duration 2.0
+
+Run `python audio_to_video.py -h` codec and debugging options.
+
+**AI Disclaimer**:
+    This script was developed with the assistance the Gemma4:31B LLM (AI); all
+    inference ran on local/personal hardware, no datacenters were used to
+    generate these tokens.
 '''
 
 import os
@@ -47,6 +62,10 @@ def create_video(
     outro_duration: float = 3.0,
     work_dir: str = '',
     verbose: int = 0,
+    audio_codec: str = 'aac',
+    video_codec: str = 'libx264',
+    ffmpeg_preset: str = 'fast',
+    ffmpeg_crf: str = '23',
 ):
     """
     Creates a video by concatenating an intro, a looped middle segment (to fill the gap),
@@ -62,13 +81,6 @@ def create_video(
     - outro_duration: Duration in seconds if outro is a still image.
     - verbose: Verbosity level (0: silent, 1: info, 2: debug).
     """
-
-    # TODO plumb these thru args to CLI options
-    audio_codec = 'aac'
-    video_codec = 'libx264'
-    ffmpeg_preset = 'fast'  # Faster encoding speed/quality tradeoff
-    ffmpeg_crf = '23'       # Constant Rate Factor (standard quality balance)
-
     subproc_stdout = None if verbose > 0 else subprocess.DEVNULL
     subproc_stderr = subprocess.STDOUT
     def run_proc(prog: str, *args: str):
@@ -192,6 +204,18 @@ if __name__ == "__main__":
     _ = parser.add_argument("--work-dir", type=str, default='',
                             help="Working directory to keep intermediate artifacts (deafult: temporary)")
 
+    _ = parser.add_argument("--audio-codec", type=str, default='aac',
+                            help="Audio codec to use (default: aac)")
+
+    _ = parser.add_argument("--video-codec", type=str, default='libx264',
+                            help="Video codec to use (default: libx264)")
+
+    _ = parser.add_argument("--preset", type=str, default='fast',
+                            help="FFmpeg preset for encoding speed/quality tradeoff (default: fast)")
+
+    _ = parser.add_argument("--crf", type=str, default='23',
+                            help="Constant Rate Factor for quality (default: 23)")
+
     _ = parser.add_argument("audio",
                             help="Path to the audio file")
     _ = parser.add_argument("intro",
@@ -216,6 +240,10 @@ if __name__ == "__main__":
             outro_duration=cast(float, args.outro_duration),
             work_dir=work_dir,
             verbose=cast(int, args.verbose),
+            audio_codec=cast(str, args.audio_codec),
+            video_codec=cast(str, args.video_codec),
+            ffmpeg_preset=cast(str, args.preset),
+            ffmpeg_crf=cast(str, args.crf),
         )
 
     work_dir = cast(str, args.work_dir)
