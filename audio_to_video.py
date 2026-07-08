@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from math import nan
+from math import nan, isnan
 
 def get_duration(file: str):
     """Returns the duration of a file in seconds."""
@@ -16,12 +16,27 @@ def get_duration(file: str):
         return nan
     return float(out)
 
+def get_resolution(file: str):
+    """Returns the resolution of a video file as 'WxH'."""
+    cmd = [
+        'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height',
+        '-of', 'csv=p=0', file
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out = result.stdout.strip() # "1920,1080"
+    # TODO would prefer this to return a `tuple[int, int]`, and then format to "WxH" as needed
+    out = out.replace(',', 'x') # "1920x1080"
+    return out if out else None
+
 def create_video(
     audio_path: str,
     intro_path: str,
     mid_path: str,
     outro_path: str,
     output_path: str,
+    intro_duration: float = 3.0,
+    outro_duration: float = 3.0,
     verbose: int = 0,
 ):
     """
@@ -30,14 +45,15 @@ def create_video(
 
     Args:
     - audio_path: Path to the source audio file.
-    - intro_path: Path to the intro video clip.
+    - intro_path: Path to the intro video clip or image.
     - mid_path: Path to the background loop video clip.
-    - outro_path: Path to the outro video clip.
+    - outro_path: Path to the outro video clip or image.
     - output_path: Path where the final video will be saved.
+    - intro_duration: Duration in seconds if intro is a still image.
+    - outro_duration: Duration in seconds if outro is a still image.
     - verbose: Verbosity level (0: silent, 1: info, 2: debug).
     """
-    # TODO STDOUT is invalid for stdout; does python have a way to passthru stdout to parent stdout? otherwise, guess we're just doing devnull then...
-    subproc_stdout = subprocess.STDOUT if verbose > 0 else subprocess.DEVNULL
+    subproc_stdout = None if verbose > 0 else subprocess.DEVNULL
     subproc_stderr = subprocess.STDOUT
     def run_proc(prog: str, *args: str):
         if verbose > 0:
@@ -46,12 +62,12 @@ def create_video(
 
     print("Analyzing files...")
     d_audio = get_duration(audio_path)
-    d_intro = get_duration(intro_path)
-    d_outro = get_duration(outro_path)
+    raw_d_intro = get_duration(intro_path)
+    raw_d_outro = get_duration(outro_path)
 
-    # TODO if d_intro or d_outro are nan, then the inputs are still images; so:
-    # - we need to take an optional intro/outro time kwarg above, and wire that to a cli argument outside
-    # - then change the ffmpeg commands below to support still images somehow
+    # Determine actual durations for gap calculation
+    d_intro = intro_duration if isnan(raw_d_intro) else raw_d_intro
+    d_outro = outro_duration if isnan(raw_d_outro) else raw_d_outro
 
     # Compute mid-fill gap and use it to validate intro/outro durations vs audio
     d_gap = d_audio - (d_intro + d_outro)
@@ -64,6 +80,32 @@ def create_video(
     with tempfile.TemporaryDirectory() as tmpdir:
         mid_temp = os.path.join(tmpdir, "mid_temp.mp4")
         list_temp = os.path.join(tmpdir, "concat_list.txt")
+        res = get_resolution(mid_path)
+
+        # Helper to handle image-to-video conversion if necessary
+        def resolve_clip(path: str, duration: float, name: str):
+            if not isnan(get_duration(path)):
+                return path
+
+            temp_clip = os.path.join(tmpdir, f"{name}_temp.mp4")
+            print(f"Converting still image {path} to video clip...")
+            args = [
+                '-y',
+                '-loop', '1',
+                '-i', path,
+                '-t', str(duration),
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+                '-pix_fmt', 'yuv420p'
+            ]
+            if res:
+                args.extend(['-s', res])
+            args.append(temp_clip)
+
+            run_proc('ffmpeg', *args)
+            return temp_clip
+
+        final_intro = resolve_clip(intro_path, d_intro, "intro")
+        final_outro = resolve_clip(outro_path, d_outro, "outro")
 
         # 1. Create a temporary looped middle segment trimmed to exact length
         print("Generating looped middle segment...")
@@ -77,9 +119,9 @@ def create_video(
 
         # 2. Create a concat list file for ffmpeg
         with open(list_temp, 'w') as f:
-            _ = f.write(f"file '{os.path.abspath(intro_path)}'\n")
+            _ = f.write(f"file '{os.path.abspath(final_intro)}'\n")
             _ = f.write(f"file '{os.path.abspath(mid_temp)}'\n")
-            _ = f.write(f"file '{os.path.abspath(outro_path)}'\n")
+            _ = f.write(f"file '{os.path.abspath(final_outro)}'\n")
 
         if verbose > 1:
             with open(list_temp, 'r') as f:
@@ -111,6 +153,12 @@ if __name__ == "__main__":
                             action='count',
                             help="Verbosity level (0: silent, 1: some, or 2: debug); or repeat to increment")
 
+    _ = parser.add_argument("--intro-duration", type=float, default=3.0,
+                            help="Duration of intro if it is a still image (default: 3.0s)")
+
+    _ = parser.add_argument("--outro-duration", type=float, default=3.0,
+                            help="Duration of outro if it is a still image (default: 3.0s)")
+
     _ = parser.add_argument("audio",
                             help="Path to the audio file")
     _ = parser.add_argument("intro",
@@ -129,5 +177,7 @@ if __name__ == "__main__":
         cast(str, args.mid),
         cast(str, args.outro),
         cast(str, args.output),
+        intro_duration=args.intro_duration,
+        outro_duration=args.outro_duration,
         verbose=cast(int, args.verbose),
     )
