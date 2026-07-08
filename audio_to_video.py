@@ -4,18 +4,6 @@ import sys
 import tempfile
 from math import nan, isnan
 
-# TODO okay so the intro is working, but the outro is missing from the output.
-#      Even just looking at the duraions does not add up correctly:
-#      - 492.400000 demo1/out.mkv
-#      - 488.332104 demo1/What is in my Drink.mp3
-#      - 3.000000 tmp1/intro_temp.mp4
-#      - 482.342000 tmp1/mid_temp.mp4
-#      - 3.000000 tmp1/outro_temp.mp4
-# TODO So:
-#      1. the output is *longer* than the input audio track, should be same length
-#      2. the intro, mid, and outro temp duraions look correct
-#      2. but the output length isn't anything clean wrt any of that, it's not +3 or +6 on either the audio track or mid gap length
-
 def get_duration(file: str):
     """Returns the duration of a file in seconds."""
     cmd = [
@@ -134,11 +122,14 @@ def create_video(
 
     run_proc(
         'ffmpeg',
-        '-y',                 # Overwrite output files without asking
-        '-stream_loop', '-1', # loops infinitely
+        '-y',                  # Overwrite output files without asking
+        '-stream_loop', '-1',  # loops infinitely
         '-i', mid_path,
-        '-t', str(d_gap),     # limits the total duration of the output
-        '-c', 'copy',         # Copy streams without re-encoding
+        '-t', str(d_gap),      # limits the total duration of the output
+        '-c:v', video_codec,   # Re-encode to ensure precision (avoid -c copy keyframe drift)
+        '-preset', 'fast',     # Speed/quality tradeoff (faster encoding)
+        '-crf', '23',          # Constant Rate Factor (standard quality balance)
+        '-pix_fmt', 'yuv420p', # Ensure YUV 4:2:0 pixel format for compatibility
         mid_temp)
 
     # 2. Create a concat list file for ffmpeg
@@ -158,13 +149,14 @@ def create_video(
     run_proc(
         'ffmpeg',
         '-y',                                          # Overwrite output files without asking
-        '-f', 'concat', # TODO document
-        '-safe', '0', # TODO document
+        '-f', 'concat',                                # Use the concat demuxer to join files in a list
+        '-safe', '0',                                  # Disable safe filename checks for absolute paths
         '-i', list_temp,                               # Video sequence
         '-i', audio_path,                              # Audio Track
         '-map', '0:v',                                 # Use video from concat
         '-map', '1:a',                                 # Use audio from file
-        '-shortest',                                   # trim to shortest
+        '-t', str(d_audio),                            # Hard limit to ensure output matches audio length
+        '-shortest',                                   # Trim to shortest stream
         '-c:v', video_codec,
         '-c:a', audio_codec,
         '-preset', 'fast', # TODO document
