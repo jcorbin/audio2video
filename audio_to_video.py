@@ -16,8 +16,8 @@ def get_duration(file: str):
         return nan
     return float(out)
 
-def get_resolution(file: str):
-    """Returns the resolution of a video file as 'WxH'."""
+def get_resolution(file: str) -> tuple[int, int]|None:
+    """Returns the resolution of a video file as."""
     cmd = [
         'ffprobe', '-v', 'error', '-select_streams', 'v:0',
         '-show_entries', 'stream=width,height',
@@ -25,9 +25,10 @@ def get_resolution(file: str):
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     out = result.stdout.strip() # "1920,1080"
-    # TODO would prefer this to return a `tuple[int, int]`, and then format to "WxH" as needed
-    out = out.replace(',', 'x') # "1920x1080"
-    return out if out else None
+    if not out:
+        return None
+    ws, hs = out.split(',')
+    return (int(ws), int(hs))
 
 def create_video(
     audio_path: str,
@@ -90,15 +91,17 @@ def create_video(
             temp_clip = os.path.join(tmpdir, f"{name}_temp.mp4")
             print(f"Converting still image {path} to video clip...")
             args = [
-                '-y',
-                '-loop', '1',
                 '-i', path,
                 '-t', str(duration),
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-                '-pix_fmt', 'yuv420p'
+                '-y',                 # Overwrite output files without asking
+                '-loop', '1',         # Loop the input image infinitely
+                '-c:v', 'libx264',    # Use H.264 video codec
+                '-preset', 'fast',    # Faster encoding speed/quality tradeoff
+                '-crf', '23',         # Constant Rate Factor (lower is higher quality)
+                '-pix_fmt', 'yuv420p' # Ensure YUV 4:2:0 pixel format for compatibility
             ]
             if res:
-                args.extend(['-s', res])
+                args.extend(['-s', f"{res[0]}x{res[1]}"])
             args.append(temp_clip)
 
             run_proc('ffmpeg', *args)
@@ -111,11 +114,12 @@ def create_video(
         print("Generating looped middle segment...")
         run_proc(
             'ffmpeg',
-            '-y',
-            '-stream_loop', '-1', # loops infinitely
             '-i', mid_path,
-            '-t', str(d_gap), # limits the total duration of the output
-            '-c', 'copy', mid_temp)
+            '-y',                 # Overwrite output files without asking
+            '-stream_loop', '-1', # loops infinitely
+            '-t', str(d_gap),     # limits the total duration of the output
+            '-c', 'copy',         # Copy streams without re-encoding
+            mid_temp)
 
         # 2. Create a concat list file for ffmpeg
         with open(list_temp, 'w') as f:
@@ -132,9 +136,10 @@ def create_video(
         # 3. Concatenate videos and add the audio file
         print("Assembling final video...")
         run_proc(
-            'ffmpeg', '-y',
+            'ffmpeg',
+            '-i', audio_path,
+            '-y',                                               # Overwrite output files without asking
             '-f', 'concat', '-safe', '0', '-i', list_temp,      # Video sequence
-            '-i', audio_path,                                   # Audio track
             '-map', '0:v', '-map', '1:a',                       # Use video from concat, audio from file
             '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', # Encode to ensure compatibility
             '-c:a', 'aac', '-shortest',                         # Audio codec and trim to shortest
@@ -177,7 +182,7 @@ if __name__ == "__main__":
         cast(str, args.mid),
         cast(str, args.outro),
         cast(str, args.output),
-        intro_duration=args.intro_duration,
-        outro_duration=args.outro_duration,
+        intro_duration=cast(float, args.intro_duration),
+        outro_duration=cast(float, args.outro_duration),
         verbose=cast(int, args.verbose),
     )
