@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from math import nan
 
 def get_duration(file: str):
     """Returns the duration of a file in seconds."""
@@ -10,7 +11,10 @@ def get_duration(file: str):
         '-of', 'default=noprint_wrappers=1:nokey=1', file
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    return float(result.stdout.strip())
+    out = result.stdout.strip()
+    if out == 'N/A':
+        return nan
+    return float(out)
 
 def create_video(
     audio_path: str,
@@ -32,6 +36,7 @@ def create_video(
     - output_path: Path where the final video will be saved.
     - verbose: Verbosity level (0: silent, 1: info, 2: debug).
     """
+    # TODO STDOUT is invalid for stdout; does python have a way to passthru stdout to parent stdout? otherwise, guess we're just doing devnull then...
     subproc_stdout = subprocess.STDOUT if verbose > 0 else subprocess.DEVNULL
     subproc_stderr = subprocess.STDOUT
     def run_proc(prog: str, *args: str):
@@ -43,6 +48,10 @@ def create_video(
     d_audio = get_duration(audio_path)
     d_intro = get_duration(intro_path)
     d_outro = get_duration(outro_path)
+
+    # TODO if d_intro or d_outro are nan, then the inputs are still images; so:
+    # - we need to take an optional intro/outro time kwarg above, and wire that to a cli argument outside
+    # - then change the ffmpeg commands below to support still images somehow
 
     # Compute mid-fill gap and use it to validate intro/outro durations vs audio
     d_gap = d_audio - (d_intro + d_outro)
@@ -98,6 +107,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Assemble a video from intro, mid-loop, and outro clips with an audio track.")
 
+    _ = parser.add_argument("-v", "--verbose", default=0,
+                            action='count',
+                            help="Verbosity level (0: silent, 1: some, or 2: debug); or repeat to increment")
+
     _ = parser.add_argument("audio",
                             help="Path to the audio file")
     _ = parser.add_argument("intro",
@@ -108,9 +121,6 @@ if __name__ == "__main__":
                             help="Path to the outro video clip")
     _ = parser.add_argument("output",
                             help="Output video file path")
-    _ = parser.add_argument("-v", "--verbose", default=0,
-                            action='count',
-                            help="Verbosity level (0: silent, 1: some, or 2: debug); or repeat to increment")
 
     args = parser.parse_args()
     create_video(
