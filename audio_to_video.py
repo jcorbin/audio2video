@@ -38,6 +38,7 @@ def create_video(
     output_path: str,
     intro_duration: float = 3.0,
     outro_duration: float = 3.0,
+    work_dir: str = '',
     verbose: int = 0,
 ):
     """
@@ -78,72 +79,71 @@ def create_video(
 
     print(f"Audio duration: {d_audio:.2f}s | Gap to fill: {d_gap:.2f}s")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        mid_temp = os.path.join(tmpdir, "mid_temp.mp4")
-        list_temp = os.path.join(tmpdir, "concat_list.txt")
-        res = get_resolution(mid_path)
+    mid_temp = os.path.join(work_dir, "mid_temp.mp4")
+    list_temp = os.path.join(work_dir, "concat_list.txt")
+    res = get_resolution(mid_path)
 
-        # Helper to handle image-to-video conversion if necessary
-        def resolve_clip(path: str, duration: float, name: str):
-            if not isnan(get_duration(path)):
-                return path
+    # Helper to handle image-to-video conversion if necessary
+    def resolve_clip(path: str, duration: float, name: str):
+        if not isnan(get_duration(path)):
+            return path
 
-            temp_clip = os.path.join(tmpdir, f"{name}_temp.mp4")
-            print(f"Converting still image {path} to video clip...")
-            args = [
-                '-i', path,
-                '-t', str(duration),
-                '-y',                 # Overwrite output files without asking
-                '-loop', '1',         # Loop the input image infinitely
-                '-c:v', 'libx264',    # Use H.264 video codec
-                '-preset', 'fast',    # Faster encoding speed/quality tradeoff
-                '-crf', '23',         # Constant Rate Factor (lower is higher quality)
-                '-pix_fmt', 'yuv420p' # Ensure YUV 4:2:0 pixel format for compatibility
-            ]
-            if res:
-                args.extend(['-s', f"{res[0]}x{res[1]}"])
-            args.append(temp_clip)
-
-            run_proc('ffmpeg', *args)
-            return temp_clip
-
-        final_intro = resolve_clip(intro_path, d_intro, "intro")
-        final_outro = resolve_clip(outro_path, d_outro, "outro")
-
-        # 1. Create a temporary looped middle segment trimmed to exact length
-        print("Generating looped middle segment...")
-        run_proc(
-            'ffmpeg',
-            '-i', mid_path,
+        temp_clip = os.path.join(work_dir, f"{name}_temp.mp4")
+        print(f"Converting still image {path} to video clip...")
+        args = [
+            '-i', path,
+            '-t', str(duration),
             '-y',                 # Overwrite output files without asking
-            '-stream_loop', '-1', # loops infinitely
-            '-t', str(d_gap),     # limits the total duration of the output
-            '-c', 'copy',         # Copy streams without re-encoding
-            mid_temp)
+            '-loop', '1',         # Loop the input image infinitely
+            '-c:v', 'libx264',    # Use H.264 video codec
+            '-preset', 'fast',    # Faster encoding speed/quality tradeoff
+            '-crf', '23',         # Constant Rate Factor (lower is higher quality)
+            '-pix_fmt', 'yuv420p' # Ensure YUV 4:2:0 pixel format for compatibility
+        ]
+        if res:
+            args.extend(['-s', f"{res[0]}x{res[1]}"])
+        args.append(temp_clip)
 
-        # 2. Create a concat list file for ffmpeg
-        with open(list_temp, 'w') as f:
-            _ = f.write(f"file '{os.path.abspath(final_intro)}'\n")
-            _ = f.write(f"file '{os.path.abspath(mid_temp)}'\n")
-            _ = f.write(f"file '{os.path.abspath(final_outro)}'\n")
+        run_proc('ffmpeg', *args)
+        return temp_clip
 
-        if verbose > 1:
-            with open(list_temp, 'r') as f:
-                print(f"Debug - Concat list contents:")
-                for n, line in enumerate(f, 1):
-                    print(f"{n:3}> {line}")
+    final_intro = resolve_clip(intro_path, d_intro, "intro")
+    final_outro = resolve_clip(outro_path, d_outro, "outro")
 
-        # 3. Concatenate videos and add the audio file
-        print("Assembling final video...")
-        run_proc(
-            'ffmpeg',
-            '-i', audio_path,
-            '-y',                                               # Overwrite output files without asking
-            '-f', 'concat', '-safe', '0', '-i', list_temp,      # Video sequence
-            '-map', '0:v', '-map', '1:a',                       # Use video from concat, audio from file
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', # Encode to ensure compatibility
-            '-c:a', 'aac', '-shortest',                         # Audio codec and trim to shortest
-            output_path)
+    # 1. Create a temporary looped middle segment trimmed to exact length
+    print("Generating looped middle segment...")
+    run_proc(
+        'ffmpeg',
+        '-i', mid_path,
+        '-y',                 # Overwrite output files without asking
+        '-stream_loop', '-1', # loops infinitely
+        '-t', str(d_gap),     # limits the total duration of the output
+        '-c', 'copy',         # Copy streams without re-encoding
+        mid_temp)
+
+    # 2. Create a concat list file for ffmpeg
+    with open(list_temp, 'w') as f:
+        _ = f.write(f"file '{os.path.abspath(final_intro)}'\n")
+        _ = f.write(f"file '{os.path.abspath(mid_temp)}'\n")
+        _ = f.write(f"file '{os.path.abspath(final_outro)}'\n")
+
+    if verbose > 1:
+        with open(list_temp, 'r') as f:
+            print(f"Debug - Concat list contents:")
+            for n, line in enumerate(f, 1):
+                print(f"{n:3}> {line}")
+
+    # 3. Concatenate videos and add the audio file
+    print("Assembling final video...")
+    run_proc(
+        'ffmpeg',
+        '-i', audio_path,
+        '-y',                                               # Overwrite output files without asking
+        '-f', 'concat', '-safe', '0', '-i', list_temp,      # Video sequence
+        '-map', '0:v', '-map', '1:a',                       # Use video from concat, audio from file
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', # Encode to ensure compatibility
+        '-c:a', 'aac', '-shortest',                         # Audio codec and trim to shortest
+        output_path)
 
     print(f"Done! Saved to {output_path}")
 
@@ -164,6 +164,9 @@ if __name__ == "__main__":
     _ = parser.add_argument("--outro-duration", type=float, default=3.0,
                             help="Duration of outro if it is a still image (default: 3.0s)")
 
+    _ = parser.add_argument("--work-dir", type=str, default='',
+                            help="Working directory to keep intermediate artifacts (deafult: temporary)")
+
     _ = parser.add_argument("audio",
                             help="Path to the audio file")
     _ = parser.add_argument("intro",
@@ -176,13 +179,23 @@ if __name__ == "__main__":
                             help="Output video file path")
 
     args = parser.parse_args()
-    create_video(
-        cast(str, args.audio),
-        cast(str, args.intro),
-        cast(str, args.mid),
-        cast(str, args.outro),
-        cast(str, args.output),
-        intro_duration=cast(float, args.intro_duration),
-        outro_duration=cast(float, args.outro_duration),
-        verbose=cast(int, args.verbose),
-    )
+
+    def run(work_dir: str):
+        create_video(
+            cast(str, args.audio),
+            cast(str, args.intro),
+            cast(str, args.mid),
+            cast(str, args.outro),
+            cast(str, args.output),
+            intro_duration=cast(float, args.intro_duration),
+            outro_duration=cast(float, args.outro_duration),
+            work_dir=work_dir,
+            verbose=cast(int, args.verbose),
+        )
+
+    work_dir = cast(str, args.work_dir)
+    if work_dir:
+        run(work_dir)
+    else:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run(tmpdir)
