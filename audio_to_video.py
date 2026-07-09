@@ -7,7 +7,11 @@ synchronizing the total length to match a provided audio track.
 
 **Example Usage**: still frame image intro/outros
     python audio_to_video.py audio.mp3 intro.png loop.mp4 outro.png output.mp4 \
-        --intro-duration 5.0 --outro-duration 2.0
+        --intro-duration 4.0 --outro-duration 4.0
+
+**Example Usage**: still frame image intro/outros with cross-fade transitions
+    python audio_to_video.py audio.mp3 intro.png loop.mp4 outro.png output.mp4 \
+        --intro-duration 4.0 --outro-duration 4.0 --fade-duration 2.0
 
 Run `python audio_to_video.py -h` codec and debugging options.
 
