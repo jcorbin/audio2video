@@ -52,6 +52,24 @@ def get_resolution(file: str) -> tuple[int, int]|None:
     ws, hs = out.split(',')
     return (int(ws), int(hs))
 
+def get_framerate(file: str) -> float:
+    """Returns the frame rate of a video file."""
+    cmd = [
+        'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=avg_frame_rate',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        file
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    out = result.stdout.strip()
+    if '/' in out:
+        num, den = out.split('/')
+        return float(num) / float(den) if float(den) != 0 else 30.0
+    try:
+        return float(out)
+    except ValueError:
+        return 30.0
+
 def create_video(
     audio_path: str,
     intro_path: str,
@@ -118,8 +136,8 @@ def create_video(
 
     print(f"Audio duration: {d_audio:.2f}s | Mid segment: {d_mid_total:.2f}s ({num_loops} loops)")
 
-    mid_temp = os.path.join(work_dir, "mid_temp.mp4")
     res = get_resolution(mid_path)
+    fps = get_framerate(mid_path)
 
     # Helper to handle image-to-video conversion if necessary
     def resolve_clip(path: str, duration: float, name: str):
@@ -149,8 +167,8 @@ def create_video(
     final_outro = resolve_clip(outro_path, d_outro, "outro")
 
     # 1. Create a temporary looped middle segment (full loops only)
+    mid_temp = os.path.join(work_dir, "mid_temp.mp4")
     print("Generating looped middle segment...")
-
     run_proc(
         'ffmpeg',
         '-y',
@@ -175,27 +193,32 @@ def create_video(
     ]
 
     filter_complex: list[str] = []
-    filter_complex.append("[0:v]")
+
+    # Normalize all clips to the same resolution and fps to ensure xfade works
+    if res and fps:
+        norm = f"scale={res[0]}:{res[1]},fps={fps}"
+        filter_complex.append(f"[0:v]{norm}[v0];")
+        filter_complex.append(f"[1:v]{norm}[v1];")
+        filter_complex.append(f"[2:v]{norm}[v2];")
+        input_v0, input_v1, input_v2 = "[v0]", "[v1]", "[v2]"
+    else:
+        input_v0, input_v1, input_v2 = "[0:v]", "[1:v]", "[2:v]"
 
     if fade_duration > 0:
         # Transition 1: Intro -> Mid
         off1 = d_intro - fade_duration
         filter_complex.append(
-            f"[1:v]xfade=transition=fade:duration={fade_duration}:offset={off1}[v1]; [v1]"
-        )
+            f"{input_v0}{input_v1}xfade=transition=fade:duration={fade_duration}:offset={off1}[v_mid];")
 
         # Transition 2: (Intro+Mid) -> Outro
-        # Duration of [0][1]xfade is d_intro + d_mid_total - fade_duration
+        # Duration of v_mid is d_intro + d_mid_total - fade_duration
         off2 = (d_intro + d_mid_total - fade_duration) - fade_duration
         filter_complex.append(
-            f"[2:v]xfade=transition=fade:duration={fade_duration}:offset={off2}"
-        )
-    else:
-        filter_complex.append("[1:v]")
-        filter_complex.append("[2:v]")
-        filter_complex.append("concat=n=3:v=1:a=0")
+            f"[v_mid]{input_v2}xfade=transition=fade:duration={fade_duration}:offset={off2}[outv]")
 
-    filter_complex.append("[outv]")
+    else:
+        # Fallback to simple concat if no fade is requested
+        filter_complex.append(f"{input_v0}{input_v1}{input_v2}concat=n=3:v=1:a=0[outv]")
 
     ffmpeg_args.extend([
         '-filter_complex', ''.join(filter_complex),
