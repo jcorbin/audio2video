@@ -1,5 +1,5 @@
 '''
-This tool assembles a video by combining an intro, a looping middle segment, and an outro, 
+This tool assembles a video by combining an intro, a looping middle segment, and an outro,
 synchronizing the total length to match a provided audio track.
 
 **Example Usage**: audio/video inputs
@@ -60,6 +60,7 @@ def create_video(
     output_path: str,
     intro_duration: float = 3.0,
     outro_duration: float = 3.0,
+    fade_duration: float = 0.0,
     work_dir: str = '',
     verbose: int = 0,
     audio_codec: str = 'aac',
@@ -79,6 +80,7 @@ def create_video(
     - output_path: Path where the final video will be saved.
     - intro_duration: Duration in seconds if intro is a still image.
     - outro_duration: Duration in seconds if outro is a still image.
+    - fade_duration: Duration in seconds for in/outro fade.
     - verbose: Verbosity level (0: silent, 1: info, 2: debug).
     """
     subproc_stdout = None if verbose > 0 else subprocess.DEVNULL
@@ -165,8 +167,8 @@ def create_video(
 
     # 3. Concatenate videos and add the audio file
     print("Assembling final video...")
-    run_proc(
-        'ffmpeg',
+
+    ffmpeg_args = [
         '-y',               # Overwrite output files without asking
         '-f', 'concat',     # Use the concat demuxer to join files in a list
         '-safe', '0',       # Disable safe filename checks for absolute paths
@@ -176,11 +178,27 @@ def create_video(
         '-map', '1:a',      # Use audio from file
         '-t', str(d_audio), # Hard limit to ensure output matches audio length
         '-shortest',        # Trim to shortest stream
+    ]
+
+    if fade_duration > 0:
+        actual_fade_out = min(fade_duration, d_intro)
+        actual_fade_in = min(fade_duration, d_outro)
+        st_out = d_intro - actual_fade_out
+        st_in = d_audio - d_outro
+
+        vf_filter = f"fade=t=out:st={st_out}:d={actual_fade_out},fade=t=in:st={st_in}:d={actual_fade_in}"
+        af_filter = f"afade=t=out:st={st_out}:d={actual_fade_out},afade=t=in:st={st_in}:d={actual_fade_in}"
+        ffmpeg_args.extend(['-vf', vf_filter, '-af', af_filter])
+
+    ffmpeg_args.extend([
         '-c:v', video_codec,
         '-c:a', audio_codec,
         '-preset', ffmpeg_preset,
         '-crf', ffmpeg_crf,
-        output_path)
+        output_path
+    ])
+
+    run_proc('ffmpeg', *ffmpeg_args)
 
     print(f"Done! Saved to {output_path}")
 
@@ -200,6 +218,9 @@ if __name__ == "__main__":
 
     _ = parser.add_argument("--outro-duration", type=float, default=3.0,
                             help="Duration of outro if it is a still image (default: 3.0s)")
+
+    _ = parser.add_argument("--fade-duration", type=float, default=0.0,
+                            help="Duration of fade-out for intro and fade-in for outro (default: 0.0s)")
 
     _ = parser.add_argument("--work-dir", type=str, default='',
                             help="Working directory to keep intermediate artifacts (deafult: temporary)")
@@ -238,6 +259,7 @@ if __name__ == "__main__":
             cast(str, args.output),
             intro_duration=cast(float, args.intro_duration),
             outro_duration=cast(float, args.outro_duration),
+            fade_duration=cast(float, args.fade_duration),
             work_dir=work_dir,
             verbose=cast(int, args.verbose),
             audio_codec=cast(str, args.audio_codec),
