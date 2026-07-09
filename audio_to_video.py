@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from math import nan, isnan
+from math import nan, isnan, ceil
 
 def get_duration(file: str):
     """Returns the duration of a file in seconds."""
@@ -94,21 +94,31 @@ def create_video(
     d_audio = get_duration(audio_path)
     raw_d_intro = get_duration(intro_path)
     raw_d_outro = get_duration(outro_path)
+    raw_d_mid = get_duration(mid_path)
 
     # Determine actual durations for gap calculation
     d_intro = intro_duration if isnan(raw_d_intro) else raw_d_intro
     d_outro = outro_duration if isnan(raw_d_outro) else raw_d_outro
+    d_mid_source = raw_d_mid
 
-    # Compute mid-fill gap and use it to validate intro/outro durations vs audio
-    d_gap = d_audio - (d_intro + d_outro)
-    if d_gap < 0:
+    # Compute mid-fill length.
+    # For crossfades, segments overlap by fade_duration.
+    # Total Length = d_intro + d_mid + d_outro - (2 * fade_duration)
+    target_mid = d_audio - (d_intro + d_outro)
+    if fade_duration > 0:
+        target_mid += 2 * fade_duration
+
+    if target_mid < 0:
         print("Error: Intro and Outro are longer than the audio file.")
         sys.exit(1)
 
-    print(f"Audio duration: {d_audio:.2f}s | Gap to fill: {d_gap:.2f}s")
+    # Round mid-gap up to an integer multiple of its source input
+    num_loops = ceil(target_mid / d_mid_source) if not isnan(d_mid_source) else 1
+    d_mid_total = num_loops * d_mid_source if not isnan(d_mid_source) else target_mid
+
+    print(f"Audio duration: {d_audio:.2f}s | Mid segment: {d_mid_total:.2f}s ({num_loops} loops)")
 
     mid_temp = os.path.join(work_dir, "mid_temp.mp4")
-    list_temp = os.path.join(work_dir, "concat_list.txt")
     res = get_resolution(mid_path)
 
     # Helper to handle image-to-video conversion if necessary
@@ -138,59 +148,59 @@ def create_video(
     final_intro = resolve_clip(intro_path, d_intro, "intro")
     final_outro = resolve_clip(outro_path, d_outro, "outro")
 
-    # 1. Create a temporary looped middle segment trimmed to exact length
+    # 1. Create a temporary looped middle segment (full loops only)
     print("Generating looped middle segment...")
 
     run_proc(
         'ffmpeg',
-        '-y',                  # Overwrite output files without asking
-        '-stream_loop', '-1',  # loops infinitely
+        '-y',
+        '-stream_loop', str(num_loops - 1), # -1 is infinite, we want exactly num_loops
         '-i', mid_path,
-        '-t', str(d_gap),      # limits the total duration of the output
-        '-pix_fmt', 'yuv420p', # Ensure YUV 4:2:0 pixel format for compatibility
+        '-t', str(d_mid_total),
+        '-pix_fmt', 'yuv420p',
         '-c:v', video_codec,
         '-preset', ffmpeg_preset,
         '-crf', ffmpeg_crf,
         mid_temp)
 
-    # 2. Create a concat list file for ffmpeg
-    with open(list_temp, 'w') as f:
-        _ = f.write(f"file '{os.path.abspath(final_intro)}'\n")
-        _ = f.write(f"file '{os.path.abspath(mid_temp)}'\n")
-        _ = f.write(f"file '{os.path.abspath(final_outro)}'\n")
-
-    if verbose > 1:
-        with open(list_temp, 'r') as f:
-            print(f"Debug - Concat list contents:")
-            for n, line in enumerate(f, 1):
-                print(f"{n:3}> {line}")
-
-    # 3. Concatenate videos and add the audio file
+    # 2. Assemble final video using a complex filter for crossfading
     print("Assembling final video...")
 
     ffmpeg_args = [
-        '-y',               # Overwrite output files without asking
-        '-f', 'concat',     # Use the concat demuxer to join files in a list
-        '-safe', '0',       # Disable safe filename checks for absolute paths
-        '-i', list_temp,    # Video sequence
-        '-i', audio_path,   # Audio Track
-        '-map', '0:v',      # Use video from concat
-        '-map', '1:a',      # Use audio from file
-        '-t', str(d_audio), # Hard limit to ensure output matches audio length
-        '-shortest',        # Trim to shortest stream
+        '-y',
+        '-i', final_intro,
+        '-i', mid_temp,
+        '-i', final_outro,
+        '-i', audio_path,
     ]
 
-    if fade_duration > 0:
-        actual_fade_out = min(fade_duration, d_intro)
-        actual_fade_in = min(fade_duration, d_outro)
-        st_out = d_intro - actual_fade_out
-        st_in = d_audio - d_outro
+    filter_complex: list[str] = []
+    filter_complex.append("[0:v]")
 
-        vf_filter = f"fade=t=out:st={st_out}:d={actual_fade_out},fade=t=in:st={st_in}:d={actual_fade_in}"
-        af_filter = f"afade=t=out:st={st_out}:d={actual_fade_out},afade=t=in:st={st_in}:d={actual_fade_in}"
-        ffmpeg_args.extend(['-vf', vf_filter, '-af', af_filter])
+    if fade_duration > 0:
+        # Transition 1: Intro -> Mid
+        off1 = d_intro - fade_duration
+        filter_complex.append(
+            f"[1:v]xfade=transition=fade:duration={fade_duration}:offset={off1}[v1]; [v1]"
+        )
+
+        # Transition 2: (Intro+Mid) -> Outro
+        # Duration of [0][1]xfade is d_intro + d_mid_total - fade_duration
+        off2 = (d_intro + d_mid_total - fade_duration) - fade_duration
+        filter_complex.append(
+            f"[2:v]xfade=transition=fade:duration={fade_duration}:offset={off2}"
+        )
+    else:
+        filter_complex.append("[1:v]")
+        filter_complex.append("[2:v]")
+        filter_complex.append("concat=n=3:v=1:a=0")
+
+    filter_complex.append("[outv]")
 
     ffmpeg_args.extend([
+        '-filter_complex', ''.join(filter_complex),
+        '-map', '[outv]',
+        '-map', '3:a',
         '-c:v', video_codec,
         '-c:a', audio_codec,
         '-preset', ffmpeg_preset,
